@@ -604,13 +604,19 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             return;
         }
 
+        // Always use the freshest computer record from the manager: right after
+        // pairing the cached copy still carries the old (unpaired) certificate.
+        final ComputerDetails target = (managerBinder.getComputer(computer.uuid) != null)
+                ? managerBinder.getComputer(computer.uuid)
+                : computer;
+
         new Thread(new Runnable() {
             @Override
             public void run() {
                 NvApp desktopApp = null;
                 try {
-                    NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort,
-                            managerBinder.getUniqueId(), computer.serverCert,
+                    NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(target), target.httpsPort,
+                            managerBinder.getUniqueId(), target.serverCert,
                             PlatformBinding.getCryptoProvider(PcView.this));
                     List<NvApp> applist = NvHTTP.getAppListByReader(new StringReader(http.getAppListRaw()));
                     for (NvApp app : applist) {
@@ -623,6 +629,11 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                             break;
                         }
                     }
+                    if (desktopApp == null && !applist.isEmpty()) {
+                        // Host exposes apps but none is named like a desktop:
+                        // use the first one instead of showing a picker.
+                        desktopApp = applist.get(0);
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -632,10 +643,10 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                     @Override
                     public void run() {
                         if (selected != null) {
-                            ServerHelper.doStart(PcView.this, selected, computer, managerBinder);
+                            ServerHelper.doStart(PcView.this, selected, target, managerBinder);
                         } else {
-                            // Fallback: no desktop-like app, show the full app list
-                            doAppList(computer, newlyPaired, false);
+                            // Fallback: no app list at all, show the app picker
+                            doAppList(target, newlyPaired, false);
                         }
                     }
                 });

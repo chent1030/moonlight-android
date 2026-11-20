@@ -2,6 +2,7 @@ package com.limelight;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 
@@ -549,8 +550,24 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
             public void run() {
                 boolean updated = false;
 
-                // First handle app updates and additions
+                // CATL投屏 only exposes the desktop app to the user; other host
+                // apps (Steam, etc.) are intentionally hidden.
+                final List<NvApp> visibleApps = new ArrayList<>();
                 for (NvApp app : appList) {
+                    String appName = app.getAppName();
+                    if (appName == null) {
+                        continue;
+                    }
+                    if (appName.equalsIgnoreCase("Desktop")
+                            || appName.contains("桌面")
+                            || appName.contains("投屏")) {
+                        visibleApps.add(app);
+                    }
+                }
+                final List<NvApp> shownApps = visibleApps.isEmpty() ? appList : visibleApps;
+
+                // First handle app updates and additions
+                for (NvApp app : shownApps) {
                     boolean foundExistingApp = false;
 
                     // Try to update an existing app in the list first
