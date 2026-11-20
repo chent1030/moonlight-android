@@ -6,9 +6,15 @@
         res/values-v21/styles.xml on API 21+ devices.
     -->
     <style name="AppBaseTheme" parent="android:Theme.Material">
-        <!-- API 21 theme customizations can go here. -->
-        <item name="android:statusBarColor">#212121</item>
-        <item name="android:navigationBarColor">#212121</item>
+        <!-- 深色科技风主题定制 -->
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="android:colorPrimary">@color/bg_surface</item>
+        <item name="android:colorPrimaryDark">@color/bg_dark</item>
+        <item name="android:colorAccent">@color/accent_blue</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:navigationBarColor">@color/bg_dark</item>
     </style>
 
 </resources>

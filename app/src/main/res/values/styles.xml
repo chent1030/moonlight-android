@@ -13,6 +13,7 @@
             backward-compatibility can go here.
 
         -->
+        <item name="android:windowBackground">@color/bg_dark</item>
     </style>
 
     <!-- Application theme. -->

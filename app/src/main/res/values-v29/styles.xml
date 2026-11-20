@@ -4,5 +4,12 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <!-- Avoid some systems like MIUI which break the visibility of games title -->
         <item name="android:forceDarkAllowed">false</item>
+        <!-- 深色科技风主题定制（与 values-v21 保持一致） -->
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="android:colorPrimary">@color/bg_surface</item>
+        <item name="android:colorPrimaryDark">@color/bg_dark</item>
+        <item name="android:colorAccent">@color/accent_blue</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
     </style>
 </resources>

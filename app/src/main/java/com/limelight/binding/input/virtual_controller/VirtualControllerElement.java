@@ -174,17 +174,17 @@ public abstract class VirtualControllerElement extends View {
     protected void showConfigurationDialog() {
         AlertDialog.Builder alertBuilder = new AlertDialog.Builder(getContext());
 
-        alertBuilder.setTitle("Configuration");
+        alertBuilder.setTitle("配置");
 
         CharSequence functions[] = new CharSequence[]{
-                "Move",
-                "Resize",
+                "移动",
+                "调整大小",
             /*election
             "Set n
             Disable color sormal color",
             "Set pressed color",
             */
-                "Cancel"
+                "取消"
         };
 
         alertBuilder.setItems(functions, new DialogInterface.OnClickListener() {

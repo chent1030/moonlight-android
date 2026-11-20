@@ -2,7 +2,9 @@ package com.limelight;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.StringReader;
 import java.net.UnknownHostException;
+import java.util.List;
 
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.crypto.AndroidCryptoProvider;
@@ -20,6 +22,7 @@ import com.limelight.preferences.AddComputerManually;
 import com.limelight.preferences.GlPreferences;
 import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.preferences.StreamSettings;
+import com.limelight.utils.ServerHelper;
 import com.limelight.ui.AdapterFragment;
 import com.limelight.ui.AdapterFragmentCallbacks;
 import com.limelight.utils.Dialog;
@@ -139,7 +142,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         // Setup the list view
         ImageButton settingsButton = findViewById(R.id.settingsButton);
         ImageButton addComputerButton = findViewById(R.id.manuallyAddPc);
-        ImageButton helpButton = findViewById(R.id.helpButton);
 
         settingsButton.setOnClickListener(new OnClickListener() {
             @Override
@@ -154,19 +156,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 startActivity(i);
             }
         });
-        helpButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                HelpLauncher.launchSetupGuide(PcView.this);
-            }
-        });
-
-        // Amazon review didn't like the help button because the wiki was not entirely
-        // navigable via the Fire TV remote (though the relevant parts were). Let's hide
-        // it on Fire TV.
-        if (getPackageManager().hasSystemFeature("amazon.hardware.fire_tv")) {
-            helpButton.setVisibility(View.GONE);
-        }
 
         getFragmentManager().beginTransaction()
             .replace(R.id.pcFragmentContainer, new AdapterFragment())
@@ -485,7 +474,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
                         if (toastSuccess) {
                             // Open the app list after a successful pairing attempt
-                            doAppList(computer, true, false);
+                            doDirectStream(computer, true);
                         }
                         else {
                             // Start polling again if we're still in the foreground
@@ -598,6 +587,60 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         i.putExtra(AppView.NEW_PAIR_EXTRA, newlyPaired);
         i.putExtra(AppView.SHOW_HIDDEN_APPS_EXTRA, showHiddenGames);
         startActivity(i);
+    }
+
+    /**
+     * Click a computer card to stream the desktop app directly, without
+     * showing the app selection page. Falls back to the app list when the
+     * host does not expose a desktop-like app.
+     */
+    private void doDirectStream(final ComputerDetails computer, final boolean newlyPaired) {
+        if (computer.state == ComputerDetails.State.OFFLINE) {
+            Toast.makeText(PcView.this, getResources().getString(R.string.error_pc_offline), Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (managerBinder == null) {
+            Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                NvApp desktopApp = null;
+                try {
+                    NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort,
+                            managerBinder.getUniqueId(), computer.serverCert,
+                            PlatformBinding.getCryptoProvider(PcView.this));
+                    List<NvApp> applist = NvHTTP.getAppListByReader(new StringReader(http.getAppListRaw()));
+                    for (NvApp app : applist) {
+                        String name = app.getAppName();
+                        if (name == null) {
+                            continue;
+                        }
+                        if (name.equalsIgnoreCase("Desktop") || name.contains("桌面") || name.contains("投屏")) {
+                            desktopApp = app;
+                            break;
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                final NvApp selected = desktopApp;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (selected != null) {
+                            ServerHelper.doStart(PcView.this, selected, computer, managerBinder);
+                        } else {
+                            // Fallback: no desktop-like app, show the full app list
+                            doAppList(computer, newlyPaired, false);
+                        }
+                    }
+                });
+            }
+        }).start();
     }
 
     @Override
@@ -762,7 +805,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                     // Pair an unpaired machine by default
                     doPair(computer.details);
                 } else {
-                    doAppList(computer.details, false, false);
+                    doDirectStream(computer.details, false);
                 }
             }
         });

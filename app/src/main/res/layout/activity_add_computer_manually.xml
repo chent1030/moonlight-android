@@ -15,6 +15,9 @@
         android:layout_height="wrap_content"
         android:preferKeepClear="true"
         android:layout_centerHorizontal="true"
+        android:textColor="@color/text_primary"
+        android:textSize="22sp"
+        android:textStyle="bold"
         android:textAppearance="?android:attr/textAppearanceLarge"
         android:layout_alignParentTop="true"/>
 
