@@ -35,6 +35,7 @@ import android.os.Process;
 import android.os.SystemClock;
 import android.util.Range;
 import android.view.Choreographer;
+import android.view.Surface;
 import android.view.SurfaceHolder;
 
 public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements Choreographer.FrameCallback {
@@ -56,7 +57,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private ByteBuffer nextInputBuffer;
 
     private Context context;
-    private Activity activity;
+    private Context activity;
     private MediaCodec videoDecoder;
     private Thread rendererThread;
     private boolean needsSpsBitstreamFixup, isExynos4;
@@ -68,6 +69,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private int initialWidth, initialHeight;
     private int videoFormat;
     private SurfaceHolder renderTarget;
+    private Surface directSurface;  // 多进程分屏：跨进程传入的 Surface（无 SurfaceHolder）
     private volatile boolean stopping;
     private CrashListener crashListener;
     private boolean reportedCrash;
@@ -273,7 +275,12 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         this.renderTarget = renderTarget;
     }
 
-    public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
+    /** 多进程分屏用：直接指定渲染 Surface（无需 SurfaceHolder）。 */
+    public void setRenderSurface(Surface surface) {
+        this.directSurface = surface;
+    }
+
+    public MediaCodecDecoderRenderer(Context activity, PreferenceConfiguration prefs,
                                      CrashListener crashListener, int consecutiveCrashCount,
                                      boolean meteredData, boolean requestedHdr,
                                      String glRenderer, PerfOverlayListener perfListener) {
@@ -516,7 +523,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         LimeLog.info("Configuring with format: "+format);
 
-        videoDecoder.configure(format, renderTarget.getSurface(), null, 0);
+        videoDecoder.configure(format, directSurface != null ? directSurface : renderTarget.getSurface(), null, 0);
 
         configuredFormat = format;
 
@@ -951,7 +958,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             return;
         }
 
-        frameTimeNanos -= activity.getWindowManager().getDefaultDisplay().getAppVsyncOffsetNanos();
+        android.view.WindowManager wm = (android.view.WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        if (wm != null) {
+            frameTimeNanos -= wm.getDefaultDisplay().getAppVsyncOffsetNanos();
+        }
 
         // Don't render unless a new frame is due. This prevents microstutter when streaming
         // at a frame rate that doesn't match the display (such as 60 FPS on 120 Hz).

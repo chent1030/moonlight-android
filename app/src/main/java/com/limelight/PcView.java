@@ -33,17 +33,25 @@ import com.limelight.utils.UiHelper;
 
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.AlertDialog;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
+import android.graphics.Color;
 import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.preference.PreferenceManager;
+import android.util.TypedValue;
 import android.view.ContextMenu;
+import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -52,10 +60,14 @@ import android.view.View.OnClickListener;
 import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.RelativeLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
+
+import com.limelight.casting.CastingControlService;
 
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -68,6 +80,11 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private ShortcutHelper shortcutHelper;
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private boolean freezeUpdates, runningPolling, inForeground, completeOnCreateCalled;
+    private TextView castCodeOverlay;
+    private TextView castStatusOverlay;
+    private BroadcastReceiver castReceiver;
+    private boolean castReceiverRegistered;
+    private boolean serviceMode;
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder binder) {
             final ComputerManagerService.ComputerManagerBinder localBinder =
@@ -83,8 +100,10 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                     // Now make the binder visible
                     managerBinder = localBinder;
 
-                    // Start updates
-                    startComputerUpdates();
+                    // Start updates（服务模式跳过电脑探测）
+                    if (!serviceMode) {
+                        startComputerUpdates();
+                    }
 
                     // Force a keypair to be generated early to avoid discovery delays
                     new AndroidCryptoProvider(PcView.this).getClientCertificate();
@@ -232,6 +251,317 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         pcGridAdapter = new PcGridAdapter(this, PreferenceConfiguration.readPreferences(this));
 
         initializeViews();
+
+        setupCasting();
+    }
+
+    // ── M2 投屏控制（会话服务）──────────────────────────────────────
+    private void setupCasting() {
+        serviceMode = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
+                .getString(CastingControlService.KEY_URL, "").trim().length() > 0;
+
+        // 投屏码覆盖层（服务模式：右上角）
+        castCodeOverlay = new TextView(this);
+        castCodeOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+        castCodeOverlay.setTextColor(Color.WHITE);
+        castCodeOverlay.setBackgroundColor(0xCC0B0D14);
+        castCodeOverlay.setPadding(24, 12, 24, 12);
+        castCodeOverlay.setGravity(Gravity.CENTER);
+        castCodeOverlay.setVisibility(View.GONE);
+        android.widget.FrameLayout.LayoutParams lp;
+        if (serviceMode) {
+            lp = new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.TOP | android.view.Gravity.RIGHT);
+            lp.topMargin = 24;
+            lp.rightMargin = 24;
+        } else {
+            lp = new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
+            lp.topMargin = 64;
+        }
+        addContentView(castCodeOverlay, lp);
+
+        // 状态行（服务模式：码下方）
+        castStatusOverlay = new TextView(this);
+        castStatusOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        castStatusOverlay.setTextColor(0xFF7A8296);
+        castStatusOverlay.setVisibility(View.GONE);
+        if (serviceMode) {
+            android.widget.FrameLayout.LayoutParams lp2 = new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.TOP | android.view.Gravity.RIGHT);
+            lp2.topMargin = 96;
+            lp2.rightMargin = 24;
+            addContentView(castStatusOverlay, lp2);
+        } else {
+            addContentView(castStatusOverlay, new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT));
+        }
+
+        // 服务模式：隐藏设置齿轮、+、电脑列表与空态 —— 电视只是接收端
+        if (serviceMode) {
+            View settings = findViewById(R.id.settingsButton);
+            if (settings != null) settings.setVisibility(View.GONE);
+            View addPc = findViewById(R.id.manuallyAddPc);
+            if (addPc != null) addPc.setVisibility(View.GONE);
+            View pcGrid = findViewById(R.id.pcFragmentContainer);
+            if (pcGrid != null) pcGrid.setVisibility(View.GONE);
+            View noPc = findViewById(R.id.no_pc_found_layout);
+            if (noPc != null) noPc.setVisibility(View.GONE);
+            setCastStatus("等待投屏指令");
+        }
+
+        // 长按标题进入投屏服务配置
+        TextView title = findViewById(R.id.title_text);
+        if (title != null) {
+            title.setOnLongClickListener(v -> {
+                showCastingSettings();
+                return true;
+            });
+        }
+
+        // CS 事件接收器
+        castReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String type = intent.getStringExtra(CastingControlService.EXTRA_TYPE);
+                String payload = intent.getStringExtra(CastingControlService.EXTRA_PAYLOAD);
+                if ("show_code".equals(type) && castCodeOverlay != null) {
+                    String code = "";
+                    try {
+                        code = new org.json.JSONObject(payload == null ? "{}" : payload).optString("code", "");
+                    } catch (org.json.JSONException ignored) {
+                    }
+                    castCodeOverlay.setText("投屏码 " + code);
+                    castCodeOverlay.setVisibility(View.VISIBLE);
+                } else if ("stop_session".equals(type)) {
+                    if (castCodeOverlay != null) {
+                        castCodeOverlay.setVisibility(View.GONE);
+                    }
+                    setCastStatus("等待投屏指令");
+                } else if ("start_session".equals(type)) {
+                    handleStartSession(payload);
+                } else if ("lock".equals(type)) {
+                    Toast.makeText(PcView.this, "大屏已锁定", Toast.LENGTH_SHORT).show();
+                } else if ("notify".equals(type)) {
+                    try {
+                        String text = new org.json.JSONObject(payload == null ? "{}" : payload).optString("text", "");
+                        Toast.makeText(PcView.this, text, Toast.LENGTH_SHORT).show();
+                    } catch (org.json.JSONException ignored) {
+                    }
+                }
+            }
+        };
+        registerCastingReceiver();
+
+        if (castingConfigured()) {
+            CastingControlService.start(this);
+        }
+    }
+
+    private void setCastStatus(String text) {
+        if (castStatusOverlay == null) {
+            return;
+        }
+        runOnUiThread(() -> {
+            if (text == null || text.isEmpty()) {
+                castStatusOverlay.setVisibility(View.GONE);
+            } else {
+                castStatusOverlay.setText(text);
+                castStatusOverlay.setVisibility(View.VISIBLE);
+            }
+        });
+    }
+
+    // 配对证书持久化（服务模式停掉 CMS 轮询后，重启/重装仍可免重配）
+    private void saveKnownCert(byte[] der) {
+        if (der == null) {
+            return;
+        }
+        getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
+                .edit()
+                .putString("cast_known_cert", android.util.Base64.encodeToString(der, android.util.Base64.NO_WRAP))
+                .apply();
+    }
+
+    private java.security.cert.X509Certificate loadKnownCert() {
+        String b64 = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
+                .getString("cast_known_cert", "");
+        if (b64 == null || b64.isEmpty()) {
+            return null;
+        }
+        try {
+            byte[] der = android.util.Base64.decode(b64, android.util.Base64.NO_WRAP);
+            java.security.cert.CertificateFactory cf = java.security.cert.CertificateFactory.getInstance("X.509");
+            return (java.security.cert.X509Certificate) cf.generateCertificate(new java.io.ByteArrayInputStream(der));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean castingConfigured() {
+        SharedPreferences sp = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE);
+        return !sp.getString(CastingControlService.KEY_URL, "").trim().isEmpty();
+    }
+
+    private void showCastingSettings() {
+        SharedPreferences sp = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE);
+        final EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(sp.getString(CastingControlService.KEY_URL, ""));
+        input.setHint("http://cast.corp.local:8099");
+        new AlertDialog.Builder(this)
+                .setTitle("投屏服务地址")
+                .setMessage("填写会话服务（CS）地址，留空则关闭服务模式")
+                .setView(input)
+                .setPositiveButton("保存", (dialog, which) -> {
+                    String url = input.getText().toString().trim();
+                    sp.edit().putString(CastingControlService.KEY_URL, url).apply();
+                    if (url.isEmpty()) {
+                        sp.edit().remove(CastingControlService.KEY_TOKEN).apply();
+                        CastingControlService.stop(this);
+                    } else {
+                        CastingControlService.start(this);
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /**
+     * M2.2：收到 CS 的 start_session 指令，找到目标电脑并直接拉起桌面投屏。
+     * 匹配顺序：电脑名 == pc_id 的主机部分 → 地址匹配 → 唯一在线电脑兜底。
+     */
+    private void handleStartSession(String payloadJson) {
+        String sessionId = "";
+        final String fPcName, fHost;
+        try {
+            org.json.JSONObject p = new org.json.JSONObject(payloadJson == null ? "{}" : payloadJson);
+            sessionId = p.optString("session_id", "");
+            org.json.JSONArray targets = p.optJSONArray("targets");
+            if (targets == null || targets.length() == 0) {
+                return;
+            }
+            org.json.JSONObject t = targets.getJSONObject(0);
+            String pcId = t.optString("pc_id", "");
+            String host = t.optString("host", "");
+            fPcName = pcId.contains("/") ? pcId.substring(0, pcId.indexOf('/')) : host;
+            fHost = host;
+        } catch (org.json.JSONException e) {
+            CastingControlService.reportError(sessionId, "bad_start_session_payload");
+            return;
+        }
+        // mDNS 发现是异步的：会话指令可能早于发现完成，后台轮询等待后再拉流
+        final String fSessionId = sessionId;
+        CastingControlService.setLastSessionId(sessionId);
+        CastingControlService.reportSessionState(sessionId, "connecting");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                ComputerObject target = null;
+                for (int attempt = 0; attempt < 6; attempt++) {
+                    target = findComputerForSession(fPcName, fHost);
+                    if (target != null) {
+                        break;
+                    }
+                    try {
+                        Thread.sleep(3000);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                }
+                // mDNS 不可用时直接信任 CS 指令里的地址（CS 是权威地址来源）
+                if (target == null && fHost != null && !fHost.isEmpty()) {
+                    ComputerDetails direct = new ComputerDetails();
+                    direct.uuid = ("CS-" + fHost).toUpperCase(java.util.Locale.US);
+                    direct.name = (fPcName == null || fPcName.isEmpty()) ? fHost : fPcName;
+                    try {
+                        direct.activeAddress = new ComputerDetails.AddressTuple(fHost, 47989);
+                    } catch (IllegalArgumentException e) {
+                        return;
+                    }
+                    direct.httpsPort = 47984;
+                    direct.state = ComputerDetails.State.ONLINE;
+                    direct.pairState = PairState.NOT_PAIRED;
+                    // 恢复上次配对成功的证书（服务模式停用轮询后缓存不可用）
+                    java.security.cert.X509Certificate known = loadKnownCert();
+                    if (known != null) {
+                        direct.serverCert = known;
+                    }
+                    target = new ComputerObject(direct);
+                }
+                if (target != null) {
+                    setCastStatus("正在连接 " + target.details.name + "…");
+                }
+                final ComputerObject fTarget = target;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (fTarget != null && fTarget.details != null) {
+                            Toast.makeText(PcView.this, "投屏到 " + fTarget.details.name, Toast.LENGTH_SHORT).show();
+                            doDirectStream(fTarget.details, false);
+                        } else {
+                            Toast.makeText(PcView.this, "找不到投屏目标电脑", Toast.LENGTH_LONG).show();
+                            CastingControlService.reportError(fSessionId, "pc_not_found: " + fPcName);
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private ComputerObject findComputerForSession(String pcName, String host) {
+        ComputerObject onlyOnline = null;
+        int onlineCount = 0;
+        for (int i = 0; i < pcGridAdapter.getCount(); i++) {
+            ComputerObject co = (ComputerObject) pcGridAdapter.getItem(i);
+            if (co == null || co.details == null || co.details.state == ComputerDetails.State.OFFLINE) {
+                continue;
+            }
+            onlineCount++;
+            onlyOnline = co;
+            if (pcName != null && !pcName.isEmpty() && pcName.equalsIgnoreCase(co.details.name)) {
+                return co;
+            }
+            if (host != null && !host.isEmpty()) {
+                try {
+                    String addr = ServerHelper.getCurrentAddressFromComputer(co.details).address;
+                    if (addr != null && host.equalsIgnoreCase(addr)) {
+                        return co;
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+        }
+        return onlineCount == 1 ? onlyOnline : null;
+    }
+
+    private void registerCastingReceiver() {
+        if (castReceiver != null && !castReceiverRegistered) {
+            IntentFilter filter = new IntentFilter(CastingControlService.ACTION_EVENT);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(castReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(castReceiver, filter);
+            }
+            castReceiverRegistered = true;
+        }
+    }
+
+    private void unregisterCastingReceiver() {
+        if (castReceiver != null && castReceiverRegistered) {
+            try {
+                unregisterReceiver(castReceiver);
+            } catch (IllegalArgumentException ignored) {
+            }
+            castReceiverRegistered = false;
+        }
     }
 
     private void startComputerUpdates() {
@@ -296,7 +626,10 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         UiHelper.showDecoderCrashDialog(this);
 
         inForeground = true;
-        startComputerUpdates();
+        registerCastingReceiver();
+        if (!serviceMode) {
+            startComputerUpdates();  // 服务模式由 CS 指令驱动，不做电脑探测
+        }
     }
 
     @Override
@@ -304,6 +637,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         super.onPause();
 
         inForeground = false;
+        unregisterCastingReceiver();
         stopComputerUpdates(false);
     }
 
@@ -413,10 +747,19 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                     else {
                         final String pinStr = PairingManager.generatePinString();
 
-                        // Spin the dialog off in a thread because it blocks
-                        Dialog.displayDialog(PcView.this, getResources().getString(R.string.pair_pairing_title),
-                                getResources().getString(R.string.pair_pairing_msg)+" "+pinStr+"\n\n"+
-                                getResources().getString(R.string.pair_pairing_help), false);
+                        // M2：把 PIN 上报会话服务，由同房间的 PC 助手代填 Sunshine（免人工输入）
+                        CastingControlService.reportPairing(computer.name,
+                                ServerHelper.getCurrentAddressFromComputer(computer).address, pinStr);
+
+                        if (serviceMode) {
+                            // 服务模式：配对全自动，不打扰用户（不显示 PIN 对话框）
+                            setCastStatus("正在连接 " + computer.name + "…");
+                        } else {
+                            // Spin the dialog off in a thread because it blocks
+                            Dialog.displayDialog(PcView.this, getResources().getString(R.string.pair_pairing_title),
+                                    getResources().getString(R.string.pair_pairing_msg)+" "+pinStr+"\n\n"+
+                                    getResources().getString(R.string.pair_pairing_help), false);
+                        }
 
                         PairingManager pm = httpConn.getPairingManager();
 
@@ -441,7 +784,17 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                             success = true;
 
                             // Pin this certificate for later HTTPS use
-                            managerBinder.getComputer(computer.uuid).serverCert = pm.getPairedCert();
+                            ComputerDetails pairedRecord = managerBinder != null ? managerBinder.getComputer(computer.uuid) : null;
+                            if (pairedRecord != null) {
+                                pairedRecord.serverCert = pm.getPairedCert();
+                            } else {
+                                computer.serverCert = pm.getPairedCert();
+                            }
+                            // 持久化证书：服务模式无轮询，重启后免重配
+                            try {
+                                saveKnownCert(pm.getPairedCert().getEncoded());
+                            } catch (Exception ignored) {
+                            }
 
                             // Invalidate reachability information after pairing to force
                             // a refresh before reading pair state again
@@ -613,6 +966,29 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                // M2.2：服务模式停用 CMS 轮询后，pairState 缓存不可信——实时向 Sunshine 查询
+                boolean paired = target.pairState == PairState.PAIRED;
+                if (!paired) {
+                    try {
+                        NvHTTP probe = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(target),
+                                target.httpsPort, managerBinder.getUniqueId(), target.serverCert,
+                                PlatformBinding.getCryptoProvider(PcView.this));
+                        paired = probe.getPairState() == PairState.PAIRED;
+                        if (paired && probe.getPairingManager().getPairedCert() != null) {
+                            target.serverCert = probe.getPairingManager().getPairedCert();
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (!paired && !newlyPaired) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            doPair(target);
+                        }
+                    });
+                    return;
+                }
                 NvApp desktopApp = null;
                 try {
                     NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(target), target.httpsPort,
@@ -645,8 +1021,9 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                         if (selected != null) {
                             ServerHelper.doStart(PcView.this, selected, target, managerBinder);
                         } else {
-                            // Fallback: no app list at all, show the app picker
-                            doAppList(target, newlyPaired, false);
+                            // M2.2：应用列表拉取失败多为未配对（证书跨 Sunshine 实例失效，缓存不可信）。
+                            // 走配对流程：PIN 经会话服务上报，PC 助手自动代填；配对成功后自动回到本方法拉流。
+                            doPair(target);
                         }
                     }
                 });

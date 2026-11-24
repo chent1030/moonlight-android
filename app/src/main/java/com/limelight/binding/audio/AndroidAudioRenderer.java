@@ -17,17 +17,22 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     private final Context context;
     private final boolean enableAudioFx;
+    private final boolean isTv;
 
     private AudioTrack track;
 
     public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
         this.context = context;
         this.enableAudioFx = enableAudioFx;
+        // 小米等电视 ROM 的 AudioTrack 小缓冲会持续 underrun，TV 上放大缓冲
+        this.isTv = context.getPackageManager().hasSystemFeature("android.software.leanback");
     }
 
     private AudioTrack createAudioTrack(int channelConfig, int sampleRate, int bufferSize, boolean lowLatency) {
+        // 小米等电视 ROM 对 USAGE_GAME + LOW_LATENCY fast track 存在写入停滞问题，TV 回退 MEDIA
+        boolean isTv = context.getPackageManager().hasSystemFeature("android.software.leanback");
         AudioAttributes.Builder attributesBuilder = new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_GAME);
+                .setUsage(isTv ? AudioAttributes.USAGE_MEDIA : AudioAttributes.USAGE_GAME);
         AudioFormat format = new AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setSampleRate(sampleRate)
@@ -49,7 +54,8 @@ public class AndroidAudioRenderer implements AudioRenderer {
                     .setBufferSizeInBytes(bufferSize);
 
             // Use PERFORMANCE_MODE_LOW_LATENCY on O and later
-            if (lowLatency) {
+            // 小米电视 ROM 在 low-latency fast track 上 AudioTrack 写入停滞（数据积压不播放），TV 回退普通模式
+            if (lowLatency && !isTv) {
                 trackBuilder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
             }
 
@@ -145,6 +151,14 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 default:
                     // Unreachable
                     throw new IllegalStateException();
+            }
+
+            // M2.2：小米等电视 ROM 的 AudioTrack 小缓冲（10ms）持续 underrun 导致无声，
+            // TV 上直接使用放大缓冲（≥2x 最小缓冲，且 ≥8 帧对齐）以抗网络/解码抖动
+            if (isTv) {
+                int minBuf = AudioTrack.getMinBufferSize(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
+                bufferSize = Math.max(minBuf * 2, bytesPerFrame * 8);
+                bufferSize = (((bufferSize + (bytesPerFrame - 1)) / bytesPerFrame) * bytesPerFrame);
             }
 
             // Skip low latency options if hardware sample rate doesn't match the content

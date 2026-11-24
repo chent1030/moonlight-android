@@ -43,8 +43,10 @@ import android.app.Activity;
 import android.app.PictureInPictureParams;
 import android.app.Service;
 import android.content.ComponentName;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
@@ -1032,9 +1034,43 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         hideSystemUi(50);
     }
 
+    private BroadcastReceiver castStopReceiver;
+    private boolean castStopReceiverRegistered;
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (castStopReceiver == null) {
+            castStopReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    // 抢占/结束指令：退出流屏回待机
+                    finish();
+                }
+            };
+        }
+        if (!castStopReceiverRegistered) {
+            IntentFilter filter = new IntentFilter(com.limelight.casting.CastingControlService.ACTION_STOP_GAME);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(castStopReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(castStopReceiver, filter);
+            }
+            castStopReceiverRegistered = true;
+        }
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
+
+        if (castStopReceiver != null && castStopReceiverRegistered) {
+            try {
+                unregisterReceiver(castStopReceiver);
+            } catch (IllegalArgumentException ignored) {
+            }
+            castStopReceiverRegistered = false;
+        }
 
         if (controllerHandler != null) {
             controllerHandler.destroy();
@@ -2290,6 +2326,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public void connectionTerminated(final int errorCode) {
+        if (errorCode != 0) {
+            com.limelight.casting.CastingControlService.reportSessionState(
+                    com.limelight.casting.CastingControlService.getLastSessionId(), "failed");
+        }
         // Perform a connection test if the failure could be due to a blocked port
         // This does network I/O, so don't do it on the main thread.
         final int portFlags = MoonBridge.getPortFlagsFromTerminationErrorCode(errorCode);
@@ -2403,6 +2443,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public void connectionStarted() {
+        com.limelight.casting.CastingControlService.reportSessionState(
+                com.limelight.casting.CastingControlService.getLastSessionId(), "streaming");
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
