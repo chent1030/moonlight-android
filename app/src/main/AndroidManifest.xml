@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -181,6 +182,15 @@
             android:name=".casting.GridActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false" />
+        <provider
+            android:name=".casting.OtaFileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
         <service android:name=".casting.Tile1Service" android:process=":tile1" android:exported="false" />
         <service android:name=".casting.Tile2Service" android:process=":tile2" android:exported="false" />
         <service android:name=".casting.Tile3Service" android:process=":tile3" android:exported="false" />

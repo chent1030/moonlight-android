@@ -103,6 +103,7 @@ public class CastingControlService extends Service {
         @Override
         public void run() {
             sendHeartbeat();
+            maybeCheckOta();
             if (!stopped) {
                 handler.postDelayed(this, HEARTBEAT_MS);
             }
@@ -445,6 +446,125 @@ public class CastingControlService extends Service {
         } catch (JSONException ignored) {
         }
         sendEnvelope("heartbeat", p);
+    }
+
+    // ── B32 OTA 远程升级 ─────────────────────────────────────────────
+    private static final long OTA_CHECK_INTERVAL_MS = 6 * 3600 * 1000L;
+    private long lastOtaCheck = 0;
+    private volatile boolean otaInProgress = false;
+
+    private void maybeCheckOta() {
+        long now = System.currentTimeMillis();
+        if (otaInProgress || now - lastOtaCheck < OTA_CHECK_INTERVAL_MS) {
+            return;
+        }
+        lastOtaCheck = now;
+        int currentCode = com.limelight.BuildConfig.VERSION_CODE;
+        String url = serviceUrl("api/ota/check?tv_id=" + android.net.Uri.encode(tvId())
+                + "&version_code=" + currentCode);
+        new Thread(() -> {
+            try {
+                okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+                okhttp3.Response resp = client.newCall(new okhttp3.Request.Builder().url(url).build()).execute();
+                if (!resp.isSuccessful() || resp.body() == null) {
+                    return;
+                }
+                JSONObject d = new JSONObject(resp.body().string());
+                resp.close();
+                if (!d.optBoolean("update", false)) {
+                    return;
+                }
+                String path = d.optString("url", "");
+                String sha = d.optString("sha256", "");
+                String verName = d.optString("version_name", "");
+                Log.i(TAG, "OTA available: " + verName);
+                otaInProgress = true;
+                downloadAndInstall(client, serviceUrl(path.replaceFirst("^/", "")), sha, verName);
+            } catch (Exception e) {
+                otaInProgress = false;
+                Log.w(TAG, "ota check failed", e);
+            }
+        }).start();
+    }
+
+    private void downloadAndInstall(okhttp3.OkHttpClient client, String url, String expectedSha, String verName) {
+        new Thread(() -> {
+            try {
+                java.io.File dir = new java.io.File(getFilesDir(), "ota");
+                if (!dir.exists() && !dir.mkdirs()) {
+                    otaInProgress = false;
+                    return;
+                }
+                java.io.File apk = new java.io.File(dir, "update-" + verName + ".apk");
+                okhttp3.Response resp = client.newCall(new okhttp3.Request.Builder().url(url).build()).execute();
+                if (!resp.isSuccessful() || resp.body() == null) {
+                    otaInProgress = false;
+                    return;
+                }
+                try (java.io.InputStream in = resp.body().byteStream();
+                     java.io.OutputStream out = new java.io.FileOutputStream(apk)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                    while ((n = in.read(buf)) > 0) {
+                        out.write(buf, 0, n);
+                        md.update(buf, 0, n);
+                    }
+                    String actual = toHex(md.digest());
+                    if (!expectedSha.isEmpty() && !actual.equalsIgnoreCase(expectedSha)) {
+                        Log.w(TAG, "OTA sha mismatch: " + actual);
+                        apk.delete();
+                        otaInProgress = false;
+                        return;
+                    }
+                } finally {
+                    resp.close();
+                }
+                storeLastOta(verName);
+                installApk(apk);
+            } catch (Exception e) {
+                Log.w(TAG, "ota download failed", e);
+                otaInProgress = false;
+            }
+        }).start();
+    }
+
+    private void installApk(java.io.File apk) {
+        try {
+            android.net.Uri uri = OtaFileProvider.getUriForFile(this, apk);
+            Intent i = new Intent(Intent.ACTION_VIEW);
+            i.setDataAndType(uri, "application/vnd.android.package-archive");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+            Log.i(TAG, "OTA installer launched");
+            // 安装完成后 App 会被替换重启；此处保持 otaInProgress 避免重复下载
+        } catch (Exception e) {
+            Log.w(TAG, "ota install failed", e);
+            otaInProgress = false;
+        }
+    }
+
+    private void storeLastOta(String verName) {
+        prefs().edit().putString("ota_pending_version", verName).apply();
+    }
+
+    private static String toHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format(java.util.Locale.US, "%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private String serviceUrl(String path) {
+        String base = prefs().getString(KEY_URL, "");
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return base + "/" + path;
     }
 
     private String localIp() {
