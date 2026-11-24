@@ -1,8 +1,9 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 buildscript {
     repositories {
-        mavenCentral()
+        // AGP 只在 Google Maven；Central 对共享出口 IP 常 429，放后面兜底
         google()
+        mavenCentral()
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:9.4.0'
@@ -11,8 +12,9 @@ buildscript {
 
 allprojects {
     repositories {
-        mavenCentral()
+        // AndroidX 只在 Google Maven；Central 对共享出口 IP 常 429，放后面兜底
         google()
+        mavenCentral()
         maven { url 'https://jitpack.io' }
     }
 }
