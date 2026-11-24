@@ -179,6 +179,10 @@
             android:name=".computers.ComputerManagerService"
             android:label="电脑管理服务" />
         <activity
+            android:name=".casting.SignageActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false" />
+        <activity
             android:name=".casting.GridActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false" />

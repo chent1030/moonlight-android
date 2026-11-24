@@ -380,6 +380,23 @@ public class CastingControlService extends Service {
                 sendBroadcast(i);
             }
 
+            if ("signage_play".equals(type) || "signage_interrupt".equals(type)) {
+                // B15-B20：标牌播放（节目单 / 紧急插播），全屏覆盖
+                final JSONObject p = payload != null ? payload : new JSONObject();
+                Intent sign = new Intent(this, SignageActivity.class);
+                sign.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                sign.putExtra("content", p.toString());
+                startActivity(sign);
+                gridHandled = true;  // 不再广播给 PcView
+                return;
+            }
+            if ("signage_stop".equals(type)) {
+                Intent stop = new Intent(SignageActivity.ACTION_SIGNAGE_STOP);
+                stop.setPackage(getPackageName());
+                sendBroadcast(stop);
+                gridHandled = true;
+                return;
+            }
             if ("restart".equals(type)) {
                 // 远程重启投屏 App（电视回待机并重新注册）
                 handler.postDelayed(new Runnable() {
