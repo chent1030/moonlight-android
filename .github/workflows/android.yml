@@ -18,6 +18,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # jni/moonlight-core/moonlight-common-c 是 git 子模块，缺失会导致
+          # ndk-build 报 "No rule to make target .../AudioStream.c"
+          submodules: recursive
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
