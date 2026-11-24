@@ -379,6 +379,22 @@ public class CastingControlService extends Service {
                 sendBroadcast(i);
             }
 
+            if ("restart".equals(type)) {
+                // 远程重启投屏 App（电视回待机并重新注册）
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        android.content.Intent launch = getPackageManager()
+                                .getLaunchIntentForPackage(getPackageName());
+                        if (launch != null) {
+                            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                            startActivity(launch);
+                        }
+                        android.os.Process.killProcess(android.os.Process.myPid());
+                    }
+                }, 300);
+                return;
+            }
             if ("stop_session".equals(type)) {
                 // 抢占/超时/手动结束：通知前台 Game 退回流屏
                 Intent stop = new Intent(ACTION_STOP_GAME);
@@ -413,8 +429,43 @@ public class CastingControlService extends Service {
             p.put("res", String.format(Locale.US, "%dx%d", dm.widthPixels, dm.heightPixels));
             p.put("active_sessions", 0);
             p.put("ver", "1.0.0-catl");
+            // B30 设备台账
+            p.put("model", Build.MANUFACTURER + " " + Build.MODEL);
+            p.put("android", Build.VERSION.RELEASE);
+            p.put("ip", localIp());
+            p.put("uptime_min", android.os.SystemClock.elapsedRealtime() / 60000L);
+            try {
+                java.io.File f = getFilesDir();
+                android.os.StatFs sf = new android.os.StatFs(f.getAbsolutePath());
+                long freeMb = sf.getAvailableBytes() / (1024 * 1024);
+                long totalMb = sf.getTotalBytes() / (1024 * 1024);
+                p.put("storage", freeMb + "/" + totalMb);
+            } catch (Exception ignored) {
+            }
         } catch (JSONException ignored) {
         }
         sendEnvelope("heartbeat", p);
+    }
+
+    private String localIp() {
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> nis =
+                    java.net.NetworkInterface.getNetworkInterfaces();
+            while (nis != null && nis.hasMoreElements()) {
+                java.net.NetworkInterface ni = nis.nextElement();
+                if (ni.isLoopback() || !ni.isUp()) {
+                    continue;
+                }
+                java.util.Enumeration<java.net.InetAddress> addrs = ni.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress a = addrs.nextElement();
+                    if (a instanceof java.net.Inet4Address && !a.isLoopbackAddress()) {
+                        return a.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
     }
 }
