@@ -42,3 +42,6 @@ app/.externalNativeBuild/
 
 # NDK stuff
 .cxx/
+# release signing (local only)
+catl-release.keystore
+android-signing-secrets.txt

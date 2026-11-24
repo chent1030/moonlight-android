@@ -81,6 +81,20 @@ android {
         }
     }
 
+    signingConfigs {
+        // Release signing driven by environment variables so CI can inject the
+        // keystore from secrets. Builds without the environment stay unsigned.
+        envRelease {
+            def keystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+            if (keystorePath != null && file(keystorePath).exists()) {
+                storeFile file(keystorePath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix ".debug"
@@ -124,6 +138,10 @@ android {
 
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            def keystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+            if (keystorePath != null && file(keystorePath).exists()) {
+                signingConfig signingConfigs.envRelease
+            }
         }
     }
 
