@@ -269,6 +269,7 @@ public class CastingControlService extends Service {
         try {
             body.put("tv_id", tvId());
             body.put("name", prefs().getString(KEY_NAME, Build.MODEL));
+            body.put("device_type", com.limelight.casting.DeviceType.detect(this));
             DisplayMetrics dm = getResources().getDisplayMetrics();
             body.put("caps", dm.widthPixels + "x" + dm.heightPixels);
             body.put("ver", "1.0.0-catl");
@@ -314,7 +315,9 @@ public class CastingControlService extends Service {
 
     private void openSocket(String base, String token) {
         String wsBase = base.replace("http://", "ws://").replace("https://", "wss://");
-        String url = wsBase + "/ws/tv?tv_id=" + tvId() + "&token=" + token;
+        // 携带设备自检类型（tv / signage），服务端写入台账
+        String url = wsBase + "/ws/tv?tv_id=" + tvId() + "&token=" + token
+                + "&type=" + com.limelight.casting.DeviceType.detect(this);
         Request req = new Request.Builder().url(url).build();
         webSocket = http.newWebSocket(req, new WebSocketListener() {
             @Override
@@ -366,6 +369,10 @@ public class CastingControlService extends Service {
             }
             boolean gridHandled = false;
             if ("start_session".equals(type) && payload != null) {
+                if (com.limelight.casting.DeviceType.isSignage(this)) {
+                    android.util.Log.i(TAG, "signage device ignores start_session");
+                    return;
+                }
                 org.json.JSONArray targets = payload.optJSONArray("targets");
                 int n = targets != null ? targets.length() : 0;
                 String layout = payload.optString("layout", "single");

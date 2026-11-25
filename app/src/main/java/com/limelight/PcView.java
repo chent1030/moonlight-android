@@ -493,6 +493,11 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         addContentView(standbyPageLabel, pageLp);
 
         startClock();
+        // 广告机：纯内容展示，不显示投屏码/不接受投屏
+        boolean signageDevice = com.limelight.casting.DeviceType.isSignage(this);
+        if (signageDevice) {
+            standbyCodeCard.setVisibility(View.GONE);
+        }
         // 投屏码（服务端 show_code 已存入 prefs）
         String code = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
                 .getString(CastingControlService.KEY_LAST_CODE, "");
