@@ -82,6 +82,22 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private boolean freezeUpdates, runningPolling, inForeground, completeOnCreateCalled;
     private TextView castCodeOverlay;
     private TextView castStatusOverlay;
+    // ── 服务模式首页（内容层 + 信息层）────────────��──────────────────
+    private android.widget.FrameLayout standbyContentLayer;
+    private android.widget.ImageView standbyImage;
+    private android.widget.VideoView standbyVideo;
+    private TextView standbyClock;
+    private TextView standbyCodeText;
+    private TextView standbyPageLabel;
+    private android.widget.LinearLayout standbyCodeCard;
+    public static final String ACTION_STANDBY_CONTENT = "com.limelight.casting.STANDBY_CONTENT";
+    private android.content.BroadcastReceiver standbyContentReceiver;
+    private Runnable standbyRefreshTick;
+    private final java.util.List<org.json.JSONObject> standbyItems = new java.util.ArrayList<>();
+    private int standbyIndex = 0;
+    private final android.os.Handler standbyHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable clockTick;
+    private Runnable contentTick;
     private BroadcastReceiver castReceiver;
     private boolean castReceiverRegistered;
     private boolean serviceMode;
@@ -260,45 +276,27 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         serviceMode = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
                 .getString(CastingControlService.KEY_URL, "").trim().length() > 0;
 
-        // 投屏码覆盖层（服务模式：右上角）
-        castCodeOverlay = new TextView(this);
-        castCodeOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
-        castCodeOverlay.setTextColor(Color.WHITE);
-        castCodeOverlay.setBackgroundColor(0xCC0B0D14);
-        castCodeOverlay.setPadding(24, 12, 24, 12);
-        castCodeOverlay.setGravity(Gravity.CENTER);
-        castCodeOverlay.setVisibility(View.GONE);
-        android.widget.FrameLayout.LayoutParams lp;
         if (serviceMode) {
-            lp = new android.widget.FrameLayout.LayoutParams(
-                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                    android.view.Gravity.TOP | android.view.Gravity.RIGHT);
-            lp.topMargin = 24;
-            lp.rightMargin = 24;
+            buildStandbyHome();
         } else {
-            lp = new android.widget.FrameLayout.LayoutParams(
+            // 直连模式：保留原投屏码黑条覆盖层
+            castCodeOverlay = new TextView(this);
+            castCodeOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+            castCodeOverlay.setTextColor(Color.WHITE);
+            castCodeOverlay.setBackgroundColor(0xCC0B0D14);
+            castCodeOverlay.setPadding(24, 12, 24, 12);
+            castCodeOverlay.setGravity(Gravity.CENTER);
+            castCodeOverlay.setVisibility(View.GONE);
+            android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
                     android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                     android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                     android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL);
             lp.topMargin = 64;
-        }
-        addContentView(castCodeOverlay, lp);
-
-        // 状态行（服务模式：码下方）
-        castStatusOverlay = new TextView(this);
-        castStatusOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        castStatusOverlay.setTextColor(0xFF7A8296);
-        castStatusOverlay.setVisibility(View.GONE);
-        if (serviceMode) {
-            android.widget.FrameLayout.LayoutParams lp2 = new android.widget.FrameLayout.LayoutParams(
-                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                    android.view.Gravity.TOP | android.view.Gravity.RIGHT);
-            lp2.topMargin = 96;
-            lp2.rightMargin = 24;
-            addContentView(castStatusOverlay, lp2);
-        } else {
+            addContentView(castCodeOverlay, lp);
+            castStatusOverlay = new TextView(this);
+            castStatusOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            castStatusOverlay.setTextColor(0xFF7A8296);
+            castStatusOverlay.setVisibility(View.GONE);
             addContentView(castStatusOverlay, new android.widget.FrameLayout.LayoutParams(
                     android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                     android.widget.FrameLayout.LayoutParams.WRAP_CONTENT));
@@ -363,6 +361,366 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         if (castingConfigured()) {
             CastingControlService.start(this);
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // 服务模式首页：全屏内容 + 左上 logo + 右上时间/投屏码卡片 + 底部轮播指示
+    // ══════════════════════════════════════════════════════════════
+    private void buildStandbyHome() {
+        // 内容层（最底）
+        standbyContentLayer = new android.widget.FrameLayout(this);
+        standbyContentLayer.setBackgroundColor(0xFF0A1428);
+        android.widget.FrameLayout.LayoutParams contentLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT);
+        addContentView(standbyContentLayer, contentLp);
+
+        // 左上 logo（品牌位）
+        TextView logo = new TextView(this);
+        logo.setText("CATL 投屏");
+        logo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        logo.setTextColor(Color.WHITE);
+        logo.getPaint().setFakeBoldText(true);
+        logo.setShadowLayer(8, 0, 2, 0x99000000);
+        android.widget.FrameLayout.LayoutParams logoLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP | android.view.Gravity.START);
+        logoLp.topMargin = 36;
+        logoLp.leftMargin = 40;
+        addContentView(logo, logoLp);
+
+        // 右上信息区（时间 + 码卡片）
+        android.widget.LinearLayout rightCol = new android.widget.LinearLayout(this);
+        rightCol.setOrientation(android.widget.LinearLayout.VERTICAL);
+        rightCol.setGravity(Gravity.END);
+        android.widget.FrameLayout.LayoutParams rightLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP | android.view.Gravity.END);
+        rightLp.topMargin = 32;
+        rightLp.rightMargin = 36;
+        addContentView(rightCol, rightLp);
+
+        // 时间
+        standbyClock = new TextView(this);
+        standbyClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        standbyClock.setTextColor(Color.WHITE);
+        standbyClock.setShadowLayer(6, 0, 1, 0x99000000);
+        android.widget.LinearLayout.LayoutParams clockLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        clockLp.bottomMargin = 10;
+        rightCol.addView(standbyClock, clockLp);
+
+        // 投屏码卡片（白底圆角）
+        standbyCodeCard = new android.widget.LinearLayout(this);
+        standbyCodeCard.setOrientation(android.widget.LinearLayout.VERTICAL);
+        standbyCodeCard.setGravity(Gravity.CENTER);
+        android.graphics.drawable.GradientDrawable cardBg = new android.graphics.drawable.GradientDrawable();
+        cardBg.setColor(0xFFFFFFFF);
+        cardBg.setCornerRadius(dp(18));
+        standbyCodeCard.setBackground(cardBg);
+        standbyCodeCard.setPadding(dp(40), dp(16), dp(40), dp(16));
+        standbyCodeCard.setElevation(dp(8));
+
+        TextView codeTitle = new TextView(this);
+        codeTitle.setText("投屏码");
+        codeTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        codeTitle.setTextColor(0xFF7A8296);
+        codeTitle.setGravity(Gravity.CENTER);
+        standbyCodeCard.addView(codeTitle);
+
+        standbyCodeText = new TextView(this);
+        standbyCodeText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 34);
+        standbyCodeText.setTextColor(0xFF005BAC);  // CATL 蓝
+        standbyCodeText.getPaint().setFakeBoldText(true);
+        standbyCodeText.setGravity(Gravity.CENTER);
+        standbyCodeText.setSingleLine(true);
+        standbyCodeText.setLetterSpacing(0.05f);
+        standbyCodeText.setText("------");
+        android.widget.LinearLayout.LayoutParams codeLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        codeLp.topMargin = dp(2);
+        standbyCodeCard.addView(standbyCodeText, codeLp);
+
+        TextView codeHint = new TextView(this);
+        codeHint.setText("打开投屏助手，输入投屏码投屏");
+        codeHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        codeHint.setTextColor(0xFF9AA3B5);
+        codeHint.setGravity(Gravity.CENTER);
+        android.widget.LinearLayout.LayoutParams hintLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        hintLp.topMargin = dp(4);
+        standbyCodeCard.addView(codeHint, hintLp);
+        // 固定卡片宽度，避免被右侧栏（时间文本）宽度挤压导致投屏码裁切
+        android.widget.LinearLayout.LayoutParams cardLp = new android.widget.LinearLayout.LayoutParams(
+                dp(360), android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        rightCol.addView(standbyCodeCard, cardLp);
+
+        // 底部轮播指示（1/N）
+        standbyPageLabel = new TextView(this);
+        standbyPageLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        standbyPageLabel.setTextColor(0xFFE7EAF2);
+        android.graphics.drawable.GradientDrawable pageBg = new android.graphics.drawable.GradientDrawable();
+        pageBg.setColor(0x66000000);
+        pageBg.setCornerRadius(dp(14));
+        standbyPageLabel.setBackground(pageBg);
+        standbyPageLabel.setPadding(dp(16), dp(5), dp(16), dp(5));
+        standbyPageLabel.setVisibility(View.GONE);
+        android.widget.FrameLayout.LayoutParams pageLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
+        pageLp.bottomMargin = dp(28);
+        addContentView(standbyPageLabel, pageLp);
+
+        startClock();
+        // 投屏码（服务端 show_code 已存入 prefs）
+        String code = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
+                .getString(CastingControlService.KEY_LAST_CODE, "");
+        updateStandbyCode(code);
+        // 拉取后台推送内容（图片/视频，多张循环）
+        fetchStandbyContent();
+        // 后台推送内容即刷新（CastingControlService 收到 signage_play 后广播）
+        standbyContentReceiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context context, android.content.Intent intent) {
+                applyStandbyContent(intent.getStringExtra("content"));
+            }
+        };
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(standbyContentReceiver,
+                    new android.content.IntentFilter(ACTION_STANDBY_CONTENT),
+                    android.content.Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(standbyContentReceiver, new android.content.IntentFilter(ACTION_STANDBY_CONTENT));
+        }
+        // 每 60 秒同步一次后台内容（排期变更无需重启电视）
+        standbyRefreshTick = new Runnable() {
+            @Override
+            public void run() {
+                fetchStandbyContent();
+                standbyHandler.postDelayed(this, 60_000L);
+            }
+        };
+        standbyHandler.postDelayed(standbyRefreshTick, 60_000L);
+        setCastStatus("等待投屏指令");
+    }
+
+    private int dp(int v) {
+        return Math.round(getResources().getDisplayMetrics().density * v);
+    }
+
+    private void startClock() {
+        if (clockTick != null) {
+            standbyHandler.removeCallbacks(clockTick);
+        }
+        clockTick = new Runnable() {
+            @Override
+            public void run() {
+                java.util.Calendar c = java.util.Calendar.getInstance();
+                String[] week = {"", "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"};
+                String text = String.format(java.util.Locale.CHINA, "%d-%02d-%02d %s %02d:%02d",
+                        c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH) + 1,
+                        c.get(java.util.Calendar.DAY_OF_MONTH),
+                        week[c.get(java.util.Calendar.DAY_OF_WEEK)],
+                        c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
+                if (standbyClock != null) {
+                    standbyClock.setText(text);
+                }
+                standbyHandler.postDelayed(this, 30_000L);
+            }
+        };
+        standbyHandler.post(clockTick);
+    }
+
+    /** show_code 更新投屏码卡片。 */
+    private void updateStandbyCode(String code) {
+        if (standbyCodeText == null || code == null || code.isEmpty()) {
+            return;
+        }
+        runOnUiThread(() -> standbyCodeText.setText(code));
+    }
+
+    /** 拉取后台推送的标牌内容并循环播放。 */
+    /** 应用后台推送的内容（signage_play 指令 payload）。 */
+    private void applyStandbyContent(String json) {
+        if (json == null || json.isEmpty()) {
+            return;
+        }
+        runOnUiThread(() -> {
+            try {
+                org.json.JSONObject d = new org.json.JSONObject(json);
+                org.json.JSONArray arr = d.optJSONArray("items");
+                java.util.List<org.json.JSONObject> items = new java.util.ArrayList<>();
+                String base = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
+                        .getString(CastingControlService.KEY_URL, "");
+                if (base.endsWith("/")) {
+                    base = base.substring(0, base.length() - 1);
+                }
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        org.json.JSONObject o = arr.getJSONObject(i);
+                        String u = o.optString("url", "");
+                        if (!u.isEmpty()) {
+                            if (!u.startsWith("http")) {
+                                o.put("url", base + u);
+                            }
+                            items.add(o);
+                        }
+                    }
+                }
+                standbyHandler.removeCallbacks(contentTick);
+                standbyItems.clear();
+                standbyItems.addAll(items);
+                standbyIndex = 0;
+                if (!standbyItems.isEmpty()) {
+                    showStandbyContent();
+                }
+            } catch (Exception e) {
+                android.util.Log.w("CastingStandby", "apply content failed: " + e.getMessage());
+            }
+        });
+    }
+
+    private void fetchStandbyContent() {
+        String baseTemp = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
+                .getString(CastingControlService.KEY_URL, "");
+        if (baseTemp.endsWith("/")) {
+            baseTemp = baseTemp.substring(0, baseTemp.length() - 1);
+        }
+        final String base = baseTemp;
+        final String url = base + "/api/signage/" + CastingControlService.tvIdOf(this);
+        new Thread(() -> {
+            try {
+                okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+                okhttp3.Response resp = client.newCall(new okhttp3.Request.Builder().url(url).build()).execute();
+                if (!resp.isSuccessful() || resp.body() == null) {
+                    return;
+                }
+                String body = resp.body().string();
+                resp.close();
+                org.json.JSONObject root = new org.json.JSONObject(body);
+                org.json.JSONObject data = root.optJSONObject("data") != null ? root.getJSONObject("data") : root;
+                org.json.JSONArray arr = data.optJSONArray("items");
+                java.util.List<org.json.JSONObject> items = new java.util.ArrayList<>();
+                if (arr != null) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        org.json.JSONObject o = arr.getJSONObject(i);
+                        if (!o.optString("url").isEmpty()) {
+                            o.put("url", o.optString("url").startsWith("http")
+                                    ? o.optString("url") : base0(base) + o.optString("url"));
+                            items.add(o);
+                        }
+                    }
+                }
+                final java.util.List<org.json.JSONObject> fItems = items;
+                runOnUiThread(() -> {
+                    standbyItems.clear();
+                    standbyItems.addAll(fItems);
+                    standbyIndex = 0;
+                    if (!standbyItems.isEmpty()) {
+                        showStandbyContent();
+                    }
+                });
+            } catch (Exception e) {
+                android.util.Log.w("CastingStandby", "fetch signage failed: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private String base0(String base) {
+        return base;
+    }
+
+    private void showStandbyContent() {
+        if (standbyItems.isEmpty()) {
+            standbyPageLabel.setVisibility(View.GONE);
+            return;
+        }
+        org.json.JSONObject item = standbyItems.get(standbyIndex % standbyItems.size());
+        String type = item.optString("type", "image");
+        String url = item.optString("url", "");
+        int durationS = Math.max(item.optInt("duration_s", 10), 3);
+        standbyPageLabel.setText((standbyIndex % standbyItems.size() + 1) + "/" + standbyItems.size());
+        standbyPageLabel.setVisibility(standbyItems.size() > 1 ? View.VISIBLE : View.GONE);
+
+        if ("video".equals(type)) {
+            standbyContentLayer.removeAllViews();
+            android.widget.VideoView vv = new android.widget.VideoView(this);
+            android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT);
+            standbyContentLayer.addView(vv, lp);
+            standbyVideo = vv;
+            vv.setVideoURI(android.net.Uri.parse(url));
+            vv.setOnPreparedListener(mp -> {
+                mp.setLooping(true);
+                vv.start();
+            });
+            vv.setOnErrorListener((mp, what, extra) -> {
+                standbyHandler.postDelayed(this::nextStandbyContent, 3000);
+                return true;
+            });
+            try {
+                vv.start();
+            } catch (Exception ignored) {
+            }
+        } else {
+            new Thread(() -> {
+                try {
+                    okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+                            .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                            .build();
+                    okhttp3.Response resp = client.newCall(new okhttp3.Request.Builder().url(url).build()).execute();
+                    if (!resp.isSuccessful() || resp.body() == null) {
+                        return;
+                    }
+                    final android.graphics.Bitmap bmp =
+                            android.graphics.BitmapFactory.decodeStream(resp.body().byteStream());
+                    resp.close();
+                    if (bmp == null) {
+                        return;
+                    }
+                    runOnUiThread(() -> {
+                        standbyContentLayer.removeAllViews();
+                        android.widget.ImageView iv = new android.widget.ImageView(this);
+                        iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+                        iv.setImageBitmap(bmp);
+                        standbyContentLayer.addView(iv, new android.widget.FrameLayout.LayoutParams(
+                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+                        standbyImage = iv;
+                    });
+                } catch (Exception e) {
+                    android.util.Log.w("CastingStandby", "image load failed: " + e.getMessage());
+                }
+            }).start();
+        }
+        if (contentTick != null) {
+            standbyHandler.removeCallbacks(contentTick);
+        }
+        contentTick = new Runnable() {
+            @Override
+            public void run() {
+                nextStandbyContent();
+            }
+        };
+        standbyHandler.postDelayed(contentTick, durationS * 1000L);
+    }
+
+    private void nextStandbyContent() {
+        if (standbyItems.isEmpty()) {
+            return;
+        }
+        standbyIndex = (standbyIndex + 1) % standbyItems.size();
+        showStandbyContent();
     }
 
     private void setCastStatus(String text) {
@@ -465,15 +823,24 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             @Override
             public void run() {
                 ComputerObject target = null;
-                for (int attempt = 0; attempt < 6; attempt++) {
+                boolean serviceMode = getSharedPreferences(CastingControlService.PREFS, MODE_PRIVATE)
+                        .getString(CastingControlService.KEY_URL, "").trim().length() > 0;
+                if (serviceMode) {
+                    // 服务模式：CS 是权威地址来源——只做一次本地快速匹配，
+                    // 未命中立即用指令地址构造（不再等 mDNS 重试，避免 18s 延迟）
                     target = findComputerForSession(fPcName, fHost);
-                    if (target != null) {
-                        break;
-                    }
-                    try {
-                        Thread.sleep(3000);
-                    } catch (InterruptedException e) {
-                        return;
+                } else {
+                    // 直连模式：mDNS 发现异步，保留轮询等待
+                    for (int attempt = 0; attempt < 6; attempt++) {
+                        target = findComputerForSession(fPcName, fHost);
+                        if (target != null) {
+                            break;
+                        }
+                        try {
+                            Thread.sleep(3000);
+                        } catch (InterruptedException e) {
+                            return;
+                        }
                     }
                 }
                 // mDNS 不可用时直接信任 CS 指令里的地址（CS 是权威地址来源）

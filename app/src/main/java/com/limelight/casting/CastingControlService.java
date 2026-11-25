@@ -223,6 +223,21 @@ public class CastingControlService extends Service {
         return getSharedPreferences(PREFS, MODE_PRIVATE);
     }
 
+    /** 静态读取/生成 tv_id（供首页拉取标牌内容）。 */
+    public static String tvIdOf(Context ctx) {
+        SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String id = sp.getString(KEY_TV_ID, "");
+        if (!id.isEmpty()) {
+            return id;
+        }
+        String androidId = android.provider.Settings.Secure.getString(
+                ctx.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
+        id = (androidId == null ? "tv" : androidId)
+                + "-" + java.util.UUID.randomUUID().toString().substring(0, 4);
+        sp.edit().putString(KEY_TV_ID, id).apply();
+        return id;
+    }
+
     private String tvId() {
         SharedPreferences sp = prefs();
         String id = sp.getString(KEY_TV_ID, "");
@@ -380,14 +395,23 @@ public class CastingControlService extends Service {
                 sendBroadcast(i);
             }
 
-            if ("signage_play".equals(type) || "signage_interrupt".equals(type)) {
-                // B15-B20：标牌播放（节目单 / 紧急插播），全屏覆盖
+            if ("signage_play".equals(type)) {
+                // 节目单/内容：推给待机首页内容层（不弹独立 Activity）
+                Intent content = new Intent(PcView.ACTION_STANDBY_CONTENT);
+                content.setPackage(getPackageName());
+                content.putExtra("content", payload == null ? "{}" : payload.toString());
+                sendBroadcast(content);
+                gridHandled = true;
+                return;
+            }
+            if ("signage_interrupt".equals(type)) {
+                // 紧急插播：全屏覆盖（优先级最高）
                 final JSONObject p = payload != null ? payload : new JSONObject();
                 Intent sign = new Intent(this, SignageActivity.class);
                 sign.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 sign.putExtra("content", p.toString());
                 startActivity(sign);
-                gridHandled = true;  // 不再广播给 PcView
+                gridHandled = true;
                 return;
             }
             if ("signage_stop".equals(type)) {
