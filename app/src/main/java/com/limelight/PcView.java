@@ -390,28 +390,18 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         logoLp.leftMargin = 40;
         addContentView(logo, logoLp);
 
-        // 右上信息区（时间 + 码卡片）
-        android.widget.LinearLayout rightCol = new android.widget.LinearLayout(this);
-        rightCol.setOrientation(android.widget.LinearLayout.VERTICAL);
-        rightCol.setGravity(Gravity.END);
-        android.widget.FrameLayout.LayoutParams rightLp = new android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                android.view.Gravity.TOP | android.view.Gravity.END);
-        rightLp.topMargin = 32;
-        rightLp.rightMargin = 36;
-        addContentView(rightCol, rightLp);
-
-        // 时间
+        // 右上时间（独立定位）
         standbyClock = new TextView(this);
         standbyClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         standbyClock.setTextColor(Color.WHITE);
         standbyClock.setShadowLayer(6, 0, 1, 0x99000000);
-        android.widget.LinearLayout.LayoutParams clockLp = new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-        clockLp.bottomMargin = 10;
-        rightCol.addView(standbyClock, clockLp);
+        android.widget.FrameLayout.LayoutParams clockLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP | android.view.Gravity.END);
+        clockLp.topMargin = 32;
+        clockLp.rightMargin = 36;
+        addContentView(standbyClock, clockLp);
 
         // 投屏码卡片（白底圆角）
         standbyCodeCard = new android.widget.LinearLayout(this);
@@ -422,7 +412,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         cardBg.setCornerRadius(dp(18));
         standbyCodeCard.setBackground(cardBg);
         standbyCodeCard.setPadding(dp(40), dp(16), dp(40), dp(16));
-        standbyCodeCard.setElevation(dp(8));
+        standbyCodeCard.setClipToOutline(true);  // 阴影/裁剪跟随圆角，避免直角残留
 
         TextView codeTitle = new TextView(this);
         codeTitle.setText("投屏码");
@@ -447,7 +437,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
         TextView codeHint = new TextView(this);
         codeHint.setText("打开投屏助手，输入投屏码投屏");
-        codeHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        codeHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         codeHint.setTextColor(0xFF9AA3B5);
         codeHint.setGravity(Gravity.CENTER);
         android.widget.LinearLayout.LayoutParams hintLp = new android.widget.LinearLayout.LayoutParams(
@@ -455,10 +445,14 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
         hintLp.topMargin = dp(4);
         standbyCodeCard.addView(codeHint, hintLp);
-        // 固定卡片宽度，避免被右侧栏（时间文本）宽度挤压导致投屏码裁切
-        android.widget.LinearLayout.LayoutParams cardLp = new android.widget.LinearLayout.LayoutParams(
-                dp(360), android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-        rightCol.addView(standbyCodeCard, cardLp);
+        // 卡片宽度按内容自适应（独立定位在时间下方）
+        android.widget.FrameLayout.LayoutParams cardLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP | android.view.Gravity.END);
+        cardLp.topMargin = 64;
+        cardLp.rightMargin = 36;
+        addContentView(standbyCodeCard, cardLp);
 
         // 底部轮播指示（1/N）
         standbyPageLabel = new TextView(this);
