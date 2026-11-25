@@ -542,12 +542,10 @@ public class GridActivity extends Activity {
             int w = MeasureSpec.getSize(widthMeasureSpec);
             int h = MeasureSpec.getSize(heightMeasureSpec);
             if (w > 0 && h > 0) {
+                // 铺满容器（CROP 语义）：宽度撑满，高度按 16:9 允许溢出，
+                // 由父容器居中裁切 —— 不再收缩留黑边。
                 int targetW = w;
-                int targetH = w * 9 / 16;
-                if (targetH > h) {
-                    targetH = h;
-                    targetW = h * 16 / 9;
-                }
+                int targetH = Math.round(w * 9f / 16f);
                 setMeasuredDimension(targetW, targetH);
             } else {
                 super.onMeasure(widthMeasureSpec, heightMeasureSpec);
