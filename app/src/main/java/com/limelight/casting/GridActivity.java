@@ -49,9 +49,12 @@ public class GridActivity extends Activity {
     public static volatile boolean sRunning = false;
 
     private final FrameLayout[] cells = new FrameLayout[MAX_TILES];
-    private LinearLayout row0;
-    private LinearLayout row1;
     private LinearLayout root;
+    private LinearLayout stripRow;   // 顶部缩略窗条
+    private FrameLayout mainCell;    // 主画面（占满剩余区域）
+    private String mainKey = "";     // 当前主画面 target key
+    private int thumbW = 360;        // 缩略窗宽度（px）
+    private int thumbH = 203;        // 缩略窗高度（16:9）
     private final Map<String, TileSlot> slots = new HashMap<>();
     private final List<TileSlot> slotOrder = new ArrayList<>();
     private BroadcastReceiver updateReceiver;
@@ -77,32 +80,43 @@ public class GridActivity extends Activity {
         hideSystemUi();
         sRunning = true;
 
-        // 固定 2x2 容器：行/列权重动态调整，tile 永不移动
+        // 布局：顶部缩略窗条 + 主画面（第一路满屏，后续设备以缩略窗叠加显示）
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
 
-        row0 = new LinearLayout(this);
-        row0.setOrientation(LinearLayout.HORIZONTAL);
-        row0.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
-        row1 = new LinearLayout(this);
-        row1.setOrientation(LinearLayout.HORIZONTAL);
-        row1.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        android.util.DisplayMetrics dm0 = getResources().getDisplayMetrics();
+        thumbW = Math.round(dm0.widthPixels * 0.18f);
+        thumbH = Math.round(thumbW * 9f / 16f);
 
-        for (int i = 0; i < 4; i++) {
-            FrameLayout cell = new FrameLayout(this);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
-            lp.setMargins(2, 2, 2, 2);
-            cell.setLayoutParams(lp);
-            cell.setBackgroundColor(0xFF05060A);
-            cells[i] = cell;
-            (i < 2 ? row0 : row1).addView(cell);
+        stripRow = new LinearLayout(this);
+        stripRow.setOrientation(LinearLayout.HORIZONTAL);
+        stripRow.setGravity(Gravity.CENTER_HORIZONTAL);
+        stripRow.setBackgroundColor(0xCC000000);
+        stripRow.setPadding(12, 12, 12, 12);
+        stripRow.setVisibility(View.GONE);
+        root.addView(stripRow, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        mainCell = new FrameLayout(this);
+        mainCell.setBackgroundColor(0xFF05060A);
+        root.addView(mainCell, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        cells[0] = mainCell;
+        for (int i = 1; i < 4; i++) {
+            FrameLayout thumb = new FrameLayout(this);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(thumbW, thumbH);
+            lp.setMargins(8, 0, 8, 0);
+            thumb.setLayoutParams(lp);
+            thumb.setBackgroundColor(0xFF05060A);
+            cells[i] = thumb;
+            stripRow.addView(thumb);
         }
-        root.addView(row0);
-        root.addView(row1);
 
-        applyTargets(parseTargets(getIntent().getStringExtra("targets")));
+        applyTargets(parseTargets(getIntent().getStringExtra("targets")),
+                getIntent().getStringExtra("main"));
 
         tileStateReceiver = new BroadcastReceiver() {
             @Override
@@ -132,7 +146,8 @@ public class GridActivity extends Activity {
         updateReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                applyTargets(parseTargets(intent.getStringExtra("targets")));
+                applyTargets(parseTargets(intent.getStringExtra("targets")),
+                        intent.getStringExtra("main"));
             }
         };
         stopReceiver = new BroadcastReceiver() {
@@ -165,42 +180,71 @@ public class GridActivity extends Activity {
         return pcId.isEmpty() ? t.optString("host") : pcId;
     }
 
-    /** 增量应用 targets：新增填格、移除停格、已有保持不动。 */
-    private void applyTargets(List<JSONObject> targets) {
+    /**
+     * 增量应用 targets + 主画面：
+     * - 主画面（main）占 cell 0 全屏；其余按顺序占顶部缩略窗 cell 1..3
+     * - 已有 tile 的分配不变则完全不动（第一路画面不中断）
+     * - 分配变化（切主画面）只重建受影响的两路
+     */
+    private void applyTargets(List<JSONObject> targets, String desiredMain) {
         runOnUiThread(() -> {
-            // 1) 移除不在新列表中的 tile
-            List<TileSlot> toRemove = new ArrayList<>();
-            for (TileSlot s : slotOrder) {
-                boolean keep = false;
-                for (JSONObject t : targets) {
-                    if (slotKey(t).equals(s.key)) {
-                        keep = true;
-                        break;
-                    }
+            if (targets.isEmpty()) {
+                for (TileSlot s : new ArrayList<>(slotOrder)) {
+                    clearTile(s);
                 }
-                if (!keep) {
-                    toRemove.add(s);
-                }
+                applyLayout();
+                return;
             }
-            for (TileSlot s : toRemove) {
-                clearTile(s);
-            }
-
-            // 2) 新增 tile 填入空闲格
+            String wantMain = desiredMain == null ? "" : desiredMain;
+            boolean mainExists = false;
             for (JSONObject t : targets) {
-                String key = slotKey(t);
-                if (slots.containsKey(key)) {
-                    continue;
-                }
-                int free = findFreeCell();
-                if (free < 0) {
-                    Toast("超出本机分屏上限");
+                if (slotKey(t).equals(wantMain)) {
+                    mainExists = true;
                     break;
                 }
-                fillTile(free, key, t);
+            }
+            if (!mainExists) {
+                wantMain = slotKey(targets.get(0));
+            }
+            mainKey = wantMain;
+
+            // 期望的 cell 分配：main → 0，其余 → 1、2、3
+            java.util.Map<String, Integer> desired = new java.util.LinkedHashMap<>();
+            desired.put(wantMain, 0);
+            int nextCell = 1;
+            for (JSONObject t : targets) {
+                String k = slotKey(t);
+                if (k.equals(wantMain)) {
+                    continue;
+                }
+                if (nextCell >= MAX_TILES) {
+                    break;
+                }
+                desired.put(k, nextCell++);
             }
 
-            // 3) 布局自适应（不移动已有 tile）
+            // 1) 移除不在列表中的 tile
+            for (TileSlot s : new ArrayList<>(slotOrder)) {
+                if (!desired.containsKey(s.key)) {
+                    clearTile(s);
+                }
+            }
+            // 2) 分配不一致的 tile 重建（切主画面时只动相关两路）
+            for (JSONObject t : targets) {
+                String key = slotKey(t);
+                Integer cell = desired.get(key);
+                if (cell == null) {
+                    continue;
+                }
+                TileSlot exist = slots.get(key);
+                if (exist != null) {
+                    if (exist.cellIndex == cell) {
+                        continue;
+                    }
+                    clearTile(exist);
+                }
+                fillTile(cell, key, t);
+            }
             applyLayout();
         });
     }
@@ -250,11 +294,16 @@ public class GridActivity extends Activity {
         slot.hint = hint;
 
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        int cols = occupiedColumnsEstimate();
-        int decW = Math.max(((dm.widthPixels / Math.max(cols, 1)) / 16) * 16, 480);
-        int decH = ((decW * 9 / 16) / 16) * 16;
-        if (decH <= 0) {
-            decH = 270;
+        int decW;
+        int decH;
+        if (cellIndex == 0) {
+            // 主画面：按屏幕全尺寸解码
+            decW = Math.max((dm.widthPixels / 16) * 16, 1280);
+            decH = Math.max(((dm.heightPixels * 9 / 16) / 16) * 16, 720);
+        } else {
+            // 缩略窗：按缩略尺寸解码（省带宽与解码开销）
+            decW = Math.max((thumbW / 16) * 16, 320);
+            decH = Math.max((thumbH / 16) * 16, 180);
         }
         String cfg = buildConfig(cellIndex, host, port, decW, decH, slotOrder.isEmpty());
 
@@ -375,64 +424,44 @@ public class GridActivity extends Activity {
     }
 
     /** 权重自适应布局：不动 tile 视图，只调行/列可见性与权重。 */
+    /** 顶部缩略条：有第二路起才显示；主画面始终占满剩余区域。 */
     private void applyLayout() {
-        boolean anyRow0 = false;
-        boolean anyRow1 = false;
+        boolean hasMain = slots.containsKey(mainKey);
+        boolean hasThumb = false;
         for (TileSlot s : slotOrder) {
-            if (s.cellIndex < 2) {
-                anyRow0 = true;
-            } else {
-                anyRow1 = true;
+            if (s.cellIndex > 0) {
+                hasThumb = true;
+                break;
             }
         }
-        if (slotOrder.isEmpty()) {
-            return;
-        }
-        if (anyRow0 && anyRow1) {
-            // 两行都占用：各自 1 行高
-            setRowVisible(row0, true, 1f);
-            setRowVisible(row1, true, 1f);
-        } else if (anyRow0) {
-            setRowVisible(row0, true, 1f);
-            setRowVisible(row1, false, 0f);
-        } else {
-            setRowVisible(row0, false, 0f);
-            setRowVisible(row1, true, 1f);
-        }
-        // 列权重：该行内被占用的 cell 平分
-        layoutRow(row0);
-        layoutRow(row1);
-    }
-
-    private void setRowVisible(LinearLayout row, boolean visible, float weight) {
-        row.setVisibility(visible ? View.VISIBLE : View.GONE);
-        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) row.getLayoutParams();
-        lp.weight = weight;
-        row.setLayoutParams(lp);
-    }
-
-    private void layoutRow(LinearLayout row) {
-        boolean[] used = new boolean[2];
-        for (TileSlot s : slotOrder) {
-            int cellInRow = s.cellIndex % 2;
-            if (row == row0 && s.cellIndex < 2) {
-                used[cellInRow] = true;
-            } else if (row == row1 && s.cellIndex >= 2) {
-                used[cellInRow] = true;
+        stripRow.setVisibility(hasThumb ? View.VISIBLE : View.GONE);
+        // 缩略窗按实际数量收紧（空 cell 隐藏）
+        for (int i = 1; i < MAX_TILES; i++) {
+            boolean used = false;
+            for (TileSlot s : slotOrder) {
+                if (s.cellIndex == i) {
+                    used = true;
+                    break;
+                }
             }
+            cells[i].setVisibility(used ? View.VISIBLE : View.GONE);
         }
-        for (int i = 0; i < 2; i++) {
-            FrameLayout cell = (FrameLayout) row.getChildAt(i);
-            if (cell == null) {
-                continue;
+        if (!hasMain && hasThumb) {
+            // 主画面暂无（例如刚被移除）：把第一路缩略提升为主画面
+            for (TileSlot s : slotOrder) {
+                if (s.cellIndex > 0) {
+                    mainKey = s.key;
+                    clearTile(s);
+                    JSONObject t = new JSONObject();
+                    try {
+                        t.put("host", s.host);
+                        t.put("pc_id", s.key);
+                    } catch (Exception ignored) {
+                    }
+                    fillTile(0, s.key, t);
+                    break;
+                }
             }
-            boolean occupied = used[i];
-            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) cell.getLayoutParams();
-            // 占用的格子占满行内空间；未占用的格子直接收掉（weight=0 + GONE）
-            // → 1 路全屏、2 路左右、3 路上二下一、4 路 2x2；退出反向收拢，不移动已有画面
-            lp.weight = occupied ? 1f : 0f;
-            cell.setLayoutParams(lp);
-            cell.setVisibility(occupied ? View.VISIBLE : View.GONE);
         }
     }
 
