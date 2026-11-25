@@ -670,7 +670,11 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     }
 
     /** 拉取后台推送的标牌内容并循环播放。 */
-    /** 顶部滚动字幕：非空显示并横向滚动，空则隐藏。 */
+    /**
+     * 顶部滚动字幕：
+     * - 文字放得下 → 静态居中，不滚动（公告一眼读完，不留空白）
+     * - 文字超宽 → 两段拼接后无缝循环（不会出现"字走完了条还空一大截"）
+     */
     private void showMarquee(String text) {
         if (standbyMarquee == null) {
             return;
@@ -681,16 +685,27 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 standbyMarquee.setVisibility(View.GONE);
                 return;
             }
-            standbyMarquee.setText(text);
             standbyMarquee.setVisibility(View.VISIBLE);
             standbyMarquee.post(() -> {
-                float textWidth = standbyMarquee.getPaint().measureText(text);
                 int viewWidth = standbyMarquee.getWidth();
+                int padding = standbyMarquee.getPaddingLeft() + standbyMarquee.getPaddingRight();
+                float singleWidth = standbyMarquee.getPaint().measureText(text);
+                if (viewWidth <= 0 || singleWidth + padding <= viewWidth) {
+                    // 短文本：静态居中
+                    standbyMarquee.setGravity(Gravity.CENTER);
+                    standbyMarquee.setText(text);
+                    return;
+                }
+                // 长文本：两段拼接，按单段宽度循环平移，接续无缝
+                final String gap = "        ";
+                String loop = text + gap + text + gap;
+                float oneLoop = standbyMarquee.getPaint().measureText(text + gap);
+                standbyMarquee.setGravity(Gravity.START);
+                standbyMarquee.setText(loop);
                 android.view.animation.TranslateAnimation anim =
-                        new android.view.animation.TranslateAnimation(
-                                viewWidth, -textWidth, 0, 0);
-                anim.setDuration(Math.max(8000,
-                        (long) ((viewWidth + textWidth) * 9)));
+                        new android.view.animation.TranslateAnimation(0, -oneLoop, 0, 0);
+                // 约 110px/s 的阅读速度
+                anim.setDuration(Math.max(6000L, (long) (oneLoop / 110f * 1000)));
                 anim.setRepeatCount(android.view.animation.Animation.INFINITE);
                 anim.setRepeatMode(android.view.animation.Animation.RESTART);
                 standbyMarquee.startAnimation(anim);
