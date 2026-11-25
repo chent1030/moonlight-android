@@ -88,6 +88,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private android.widget.VideoView standbyVideo;
     private TextView standbyClock;
     private android.widget.LinearLayout standbyRightColumn;
+    private boolean clockFitted = false;
     private TextView standbyCodeText;
     private TextView standbyPageLabel;
     private android.widget.LinearLayout standbyCodeCard;
@@ -368,12 +369,22 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     // 服务模式首页：全屏内容 + 左上 logo + 右上时间/投屏码卡片 + 底部轮播指示
     // ══════════════════════════════════════════════════════════════
     private void buildStandbyHome() {
-        // 内容层（最底）
+        // 内容层（最底）：用负边距抵消 activity 根布局 padding，做到真正全屏到边
         standbyContentLayer = new android.widget.FrameLayout(this);
         standbyContentLayer.setBackgroundColor(0xFF0A1428);
         android.widget.FrameLayout.LayoutParams contentLp = new android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT);
+        android.view.View rootContent = findViewById(android.R.id.content);
+        if (rootContent instanceof android.view.ViewGroup) {
+            android.view.ViewGroup vg = (android.view.ViewGroup) rootContent;
+            vg.setClipChildren(false);
+            vg.setClipToPadding(false);
+            contentLp.leftMargin = -vg.getPaddingLeft();
+            contentLp.topMargin = -vg.getPaddingTop();
+            contentLp.rightMargin = -vg.getPaddingRight();
+            contentLp.bottomMargin = -vg.getPaddingBottom();
+        }
         addContentView(standbyContentLayer, contentLp);
 
         // 左上 logo（品牌位）
@@ -399,7 +410,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         standbyClock = new TextView(this);
         standbyClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         standbyClock.setTextColor(Color.WHITE);
-        standbyClock.setGravity(Gravity.END);
+        standbyClock.setGravity(Gravity.CENTER);
         standbyClock.setShadowLayer(6, 0, 1, 0x99000000);
         android.widget.LinearLayout.LayoutParams clockLp = new android.widget.LinearLayout.LayoutParams(
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
@@ -511,7 +522,77 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             }
         };
         standbyHandler.postDelayed(standbyRefreshTick, 60_000L);
+        // 首帧布局完成后，把时间文字宽度适配到卡片宽度（两端齐平）
+        standbyCodeCard.post(this::fitClockToCardWidth);
         setCastStatus("等待投屏指令");
+    }
+
+    /**
+     * 让时间文字的实际渲染宽度等于投屏码卡片宽度：
+     * 以卡片宽度为目标，二分/线性搜索最大可用字号（13~24sp），
+     * 使「2026-11-25 星期三 13:17」两端与卡片左右边缘齐平。
+     */
+    private void fitClockToCardWidth() {
+        if (standbyClock == null || standbyCodeCard == null) {
+            return;
+        }
+        int cardWidth = standbyCodeCard.getWidth();
+        if (cardWidth <= 0) {
+            // 布局未完成，稍后重试（最多几帧）
+            standbyHandler.postDelayed(this::fitClockToCardWidth, 120L);
+            return;
+        }
+        CharSequence text = standbyClock.getText();
+        if (text == null || text.length() == 0) {
+            return;
+        }
+        android.text.TextPaint paint = new android.text.TextPaint(standbyClock.getPaint());
+        String probe = text.toString();
+        android.graphics.Rect probeInk = new android.graphics.Rect();
+        float bestSp = 13f;
+        // 选最大字号，保证整串文字（含字间距）不超出卡片宽度，避免被裁
+        for (float sp = 24f; sp >= 12f; sp -= 0.25f) {
+            paint.setTextSize(TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_SP, sp, getResources().getDisplayMetrics()));
+            if (paint.measureText(probe, 0, probe.length()) <= cardWidth) {
+                bestSp = sp;
+                break;
+            }
+        }
+        standbyClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, bestSp);
+        // 按「字形墨迹」宽度精确对齐：目标墨迹宽 = 卡片宽 - 左右字形边距
+        float textPx = TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP, bestSp, getResources().getDisplayMetrics());
+        paint.setTextSize(textPx);
+        String str = text.toString();
+        android.graphics.Rect ink = new android.graphics.Rect();
+        paint.getTextBounds(str, 0, str.length(), ink);
+        float measured = paint.measureText(str, 0, str.length());
+        float leftBearing = Math.max(ink.left, 0);
+        float rightBearing = Math.max(measured - ink.right, 0);
+        float inkWidth = ink.width();
+        float targetInk = cardWidth - leftBearing - rightBearing
+                - standbyClock.getPaddingLeft() - standbyClock.getPaddingRight();
+        int gaps = Math.max(str.length() - 1, 1);
+        float spacingPx = (targetInk - inkWidth) / gaps;
+        standbyClock.setLetterSpacing(spacingPx > 0 ? spacingPx / textPx : 0f);
+        clockFitted = true;
+    }
+
+    /** 视频铺满全屏：VideoView 默认按视频比例测量并居中，会留黑边；覆盖 onMeasure 强制填满。 */
+    private static class FullscreenVideoView extends android.widget.VideoView {
+        FullscreenVideoView(android.content.Context context) {
+            super(context);
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+            // 忽略视频自身比例，直接铺满父容器（画面按 CROPPING 模式裁剪）
+            setMeasuredDimension(
+                    android.view.View.MeasureSpec.getSize(widthMeasureSpec),
+                    android.view.View.MeasureSpec.getSize(heightMeasureSpec));
+        }
     }
 
     private int dp(int v) {
@@ -534,6 +615,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                         c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
                 if (standbyClock != null) {
                     standbyClock.setText(text);
+                    fitClockToCardWidth();
                 }
                 standbyHandler.postDelayed(this, 30_000L);
             }
@@ -657,7 +739,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
         if ("video".equals(type)) {
             standbyContentLayer.removeAllViews();
-            android.widget.VideoView vv = new android.widget.VideoView(this);
+            FullscreenVideoView vv = new FullscreenVideoView(this);
             android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
                     android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                     android.widget.FrameLayout.LayoutParams.MATCH_PARENT);
@@ -666,6 +748,11 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             vv.setVideoURI(android.net.Uri.parse(url));
             vv.setOnPreparedListener(mp -> {
                 mp.setLooping(true);
+                // 裁剪铺满全屏（保持比例裁掉超出部分，不拉伸变形）
+                try {
+                    mp.setVideoScalingMode(android.media.MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
+                } catch (Exception ignored) {
+                }
                 vv.start();
             });
             vv.setOnErrorListener((mp, what, extra) -> {
