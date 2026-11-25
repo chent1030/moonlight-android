@@ -49,7 +49,7 @@ public class GridActivity extends Activity {
     public static volatile boolean sRunning = false;
 
     private final FrameLayout[] cells = new FrameLayout[MAX_TILES];
-    private LinearLayout root;
+    private android.widget.FrameLayout root;
     private LinearLayout stripRow;   // 顶部缩略窗条
     private FrameLayout mainCell;    // 主画面（占满剩余区域）
     private String mainKey = "";     // 当前主画面 target key
@@ -80,9 +80,8 @@ public class GridActivity extends Activity {
         hideSystemUi();
         sRunning = true;
 
-        // 布局：顶部缩略窗条 + 主画面（第一路满屏，后续设备以缩略窗叠加显示）
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        // 布局：主画面始终全屏铺满；缩略窗条悬浮叠加在画面顶部（不挤压主画面）
+        root = new android.widget.FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         setContentView(root);
 
@@ -90,19 +89,24 @@ public class GridActivity extends Activity {
         thumbW = Math.round(dm0.widthPixels * 0.18f);
         thumbH = Math.round(thumbW * 9f / 16f);
 
+        mainCell = new FrameLayout(this);
+        mainCell.setBackgroundColor(0xFF05060A);
+        root.addView(mainCell, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+
         stripRow = new LinearLayout(this);
         stripRow.setOrientation(LinearLayout.HORIZONTAL);
         stripRow.setGravity(Gravity.CENTER_HORIZONTAL);
-        stripRow.setBackgroundColor(0xCC000000);
+        stripRow.setBackgroundColor(0x99000000);
         stripRow.setPadding(12, 12, 12, 12);
         stripRow.setVisibility(View.GONE);
-        root.addView(stripRow, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        mainCell = new FrameLayout(this);
-        mainCell.setBackgroundColor(0xFF05060A);
-        root.addView(mainCell, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        android.widget.FrameLayout.LayoutParams stripLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        stripLp.topMargin = 20;
+        root.addView(stripRow, stripLp);
 
         cells[0] = mainCell;
         for (int i = 1; i < 4; i++) {
