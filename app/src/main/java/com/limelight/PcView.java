@@ -87,6 +87,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private android.widget.ImageView standbyImage;
     private android.widget.VideoView standbyVideo;
     private TextView standbyClock;
+    private android.widget.LinearLayout standbyRightColumn;
     private TextView standbyCodeText;
     private TextView standbyPageLabel;
     private android.widget.LinearLayout standbyCodeCard;
@@ -390,18 +391,21 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         logoLp.leftMargin = 40;
         addContentView(logo, logoLp);
 
-        // 右上时间（独立定位）
+        // 右上信息列：宽度由投屏码卡片决定，时间与卡片左右边缘对齐
+        standbyRightColumn = new android.widget.LinearLayout(this);
+        standbyRightColumn.setOrientation(android.widget.LinearLayout.VERTICAL);
+        standbyRightColumn.setGravity(Gravity.END);
+
         standbyClock = new TextView(this);
         standbyClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         standbyClock.setTextColor(Color.WHITE);
+        standbyClock.setGravity(Gravity.END);
         standbyClock.setShadowLayer(6, 0, 1, 0x99000000);
-        android.widget.FrameLayout.LayoutParams clockLp = new android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-                android.view.Gravity.TOP | android.view.Gravity.END);
-        clockLp.topMargin = 32;
-        clockLp.rightMargin = 36;
-        addContentView(standbyClock, clockLp);
+        android.widget.LinearLayout.LayoutParams clockLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        clockLp.bottomMargin = 10;
+        standbyRightColumn.addView(standbyClock, clockLp);
 
         // 投屏码卡片（白底圆角）
         standbyCodeCard = new android.widget.LinearLayout(this);
@@ -445,14 +449,20 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
         hintLp.topMargin = dp(4);
         standbyCodeCard.addView(codeHint, hintLp);
-        // 卡片宽度按内容自适应（独立定位在时间下方）
-        android.widget.FrameLayout.LayoutParams cardLp = new android.widget.FrameLayout.LayoutParams(
+        // 卡片加入右列（宽度自适应，列宽由它决定）
+        android.widget.LinearLayout.LayoutParams cardLp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        standbyRightColumn.addView(standbyCodeCard, cardLp);
+
+        // 右列整体定位右上（卡片右边缘距屏幕 36dp）
+        android.widget.FrameLayout.LayoutParams colLp = new android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.view.Gravity.TOP | android.view.Gravity.END);
-        cardLp.topMargin = 64;
-        cardLp.rightMargin = 36;
-        addContentView(standbyCodeCard, cardLp);
+        colLp.topMargin = 32;
+        colLp.rightMargin = 36;
+        addContentView(standbyRightColumn, colLp);
 
         // 底部轮播指示（1/N）
         standbyPageLabel = new TextView(this);
