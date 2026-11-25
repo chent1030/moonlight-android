@@ -402,6 +402,15 @@ public class CastingControlService extends Service {
                 sendBroadcast(i);
             }
 
+            if ("signage_marquee".equals(type)) {
+                Intent m = new Intent(PcView.ACTION_STANDBY_MARQUEE);
+                m.setPackage(getPackageName());
+                String marqueeText = payload == null ? "" : payload.optString("text", "");
+                m.putExtra("text", marqueeText);
+                sendBroadcast(m);
+                gridHandled = true;
+                return;
+            }
             if ("signage_play".equals(type)) {
                 // 节目单/内容：推给待机首页内容层（不弹独立 Activity）
                 Intent content = new Intent(PcView.ACTION_STANDBY_CONTENT);

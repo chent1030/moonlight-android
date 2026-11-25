@@ -93,8 +93,11 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private TextView standbyPageLabel;
     private android.widget.LinearLayout standbyCodeCard;
     public static final String ACTION_STANDBY_CONTENT = "com.limelight.casting.STANDBY_CONTENT";
+    public static final String ACTION_STANDBY_MARQUEE = "com.limelight.casting.STANDBY_MARQUEE";
+    private TextView standbyMarquee;
     private android.content.BroadcastReceiver standbyContentReceiver;
     private Runnable standbyRefreshTick;
+    private android.content.BroadcastReceiver standbyMarqueeReceiver;
     private final java.util.List<org.json.JSONObject> standbyItems = new java.util.ArrayList<>();
     private int standbyIndex = 0;
     private final android.os.Handler standbyHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -387,6 +390,23 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         }
         addContentView(standbyContentLayer, contentLp);
 
+        // 顶部滚动字幕条（公告/通知，无素材时也显示）
+        standbyMarquee = new TextView(this);
+        standbyMarquee.setTextColor(Color.WHITE);
+        standbyMarquee.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        standbyMarquee.setSingleLine(true);
+        standbyMarquee.setShadowLayer(6, 0, 2, Color.BLACK);
+        standbyMarquee.setGravity(Gravity.CENTER_VERTICAL);
+        standbyMarquee.setPadding(dp(24), 0, dp(24), 0);
+        android.graphics.drawable.GradientDrawable marqueeBg = new android.graphics.drawable.GradientDrawable();
+        marqueeBg.setColor(0x99000000);
+        standbyMarquee.setBackground(marqueeBg);
+        standbyMarquee.setVisibility(View.GONE);
+        android.widget.FrameLayout.LayoutParams marqueeLp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, dp(52),
+                android.view.Gravity.TOP);
+        addContentView(standbyMarquee, marqueeLp);
+
         // 左上 logo（品牌位）
         TextView logo = new TextView(this);
         logo.setText("CATL 投屏");
@@ -398,7 +418,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.view.Gravity.TOP | android.view.Gravity.START);
-        logoLp.topMargin = 36;
+        logoLp.topMargin = 76;
         logoLp.leftMargin = 40;
         addContentView(logo, logoLp);
 
@@ -471,7 +491,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
                 android.view.Gravity.TOP | android.view.Gravity.END);
-        colLp.topMargin = 32;
+        colLp.topMargin = 118;
         colLp.rightMargin = 36;
         addContentView(standbyRightColumn, colLp);
 
@@ -504,6 +524,19 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         updateStandbyCode(code);
         // 拉取后台推送内容（图片/视频，多张循环）
         fetchStandbyContent();
+        standbyMarqueeReceiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context context, android.content.Intent intent) {
+                showMarquee(intent.getStringExtra("text"));
+            }
+        };
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(standbyMarqueeReceiver,
+                    new android.content.IntentFilter(ACTION_STANDBY_MARQUEE),
+                    android.content.Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(standbyMarqueeReceiver, new android.content.IntentFilter(ACTION_STANDBY_MARQUEE));
+        }
         // 后台推送内容即刷新（CastingControlService 收到 signage_play 后广播）
         standbyContentReceiver = new android.content.BroadcastReceiver() {
             @Override
@@ -637,6 +670,34 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     }
 
     /** 拉取后台推送的标牌内容并循环播放。 */
+    /** 顶部滚动字幕：非空显示并横向滚动，空则隐藏。 */
+    private void showMarquee(String text) {
+        if (standbyMarquee == null) {
+            return;
+        }
+        runOnUiThread(() -> {
+            standbyMarquee.clearAnimation();
+            if (text == null || text.trim().isEmpty()) {
+                standbyMarquee.setVisibility(View.GONE);
+                return;
+            }
+            standbyMarquee.setText(text);
+            standbyMarquee.setVisibility(View.VISIBLE);
+            standbyMarquee.post(() -> {
+                float textWidth = standbyMarquee.getPaint().measureText(text);
+                int viewWidth = standbyMarquee.getWidth();
+                android.view.animation.TranslateAnimation anim =
+                        new android.view.animation.TranslateAnimation(
+                                viewWidth, -textWidth, 0, 0);
+                anim.setDuration(Math.max(8000,
+                        (long) ((viewWidth + textWidth) * 9)));
+                anim.setRepeatCount(android.view.animation.Animation.INFINITE);
+                anim.setRepeatMode(android.view.animation.Animation.RESTART);
+                standbyMarquee.startAnimation(anim);
+            });
+        });
+    }
+
     /** 应用后台推送的内容（signage_play 指令 payload）。 */
     private void applyStandbyContent(String json) {
         if (json == null || json.isEmpty()) {
@@ -711,8 +772,10 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                         }
                     }
                 }
+                final String marqueeTop = data.optString("marquee_top", "");
                 final java.util.List<org.json.JSONObject> fItems = items;
                 runOnUiThread(() -> {
+                    showMarquee(marqueeTop);
                     standbyItems.clear();
                     standbyItems.addAll(fItems);
                     standbyIndex = 0;
