@@ -301,9 +301,10 @@ public class GridActivity extends Activity {
         int decW;
         int decH;
         if (cellIndex == 0) {
-            // 主画面：按屏幕全尺寸解码
+            // 主画面：1080p 固定（宽取屏幕宽、高按 16:9，且不超过屏幕高）
             decW = Math.max((dm.widthPixels / 16) * 16, 1280);
-            decH = Math.max(((dm.heightPixels * 9 / 16) / 16) * 16, 720);
+            decH = Math.min((decW * 9 / 16 / 16) * 16, (dm.heightPixels / 16) * 16);
+            decH = Math.max(decH, 720);
         } else {
             // 缩略窗：按缩略尺寸解码（省带宽与解码开销）
             decW = Math.max((thumbW / 16) * 16, 320);
