@@ -86,7 +86,7 @@ public class GridActivity extends Activity {
         setContentView(root);
 
         android.util.DisplayMetrics dm0 = getResources().getDisplayMetrics();
-        thumbW = Math.round(dm0.widthPixels * 0.18f);
+        thumbW = Math.round(dm0.widthPixels * 0.12f);
         thumbH = Math.round(thumbW * 9f / 16f);
 
         mainCell = new FrameLayout(this);
@@ -546,11 +546,8 @@ public class GridActivity extends Activity {
             int w = MeasureSpec.getSize(widthMeasureSpec);
             int h = MeasureSpec.getSize(heightMeasureSpec);
             if (w > 0 && h > 0) {
-                // 铺满容器（CROP 语义）：宽度撑满，高度按 16:9 允许溢出，
-                // 由父容器居中裁切 —— 不再收缩留黑边。
-                int targetW = w;
-                int targetH = Math.round(w * 9f / 16f);
-                setMeasuredDimension(targetW, targetH);
+                // 强制填满容器：宽高都取容器尺寸（16:9 流在 16:9 屏上无拉伸）
+                setMeasuredDimension(w, h);
             } else {
                 super.onMeasure(widthMeasureSpec, heightMeasureSpec);
             }
